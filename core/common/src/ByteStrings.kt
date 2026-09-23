@@ -41,7 +41,7 @@ public fun Sink.write(byteString: ByteString, startIndex: Int = 0, endIndex: Int
             while (offset < endIndex) {
                 val written = UnsafeBufferOperations.writeToTail(buffer, 1) { segData, pos, limit ->
                     val toWrite = min(endIndex - offset, limit - pos)
-                    data.copyInto(segData, pos, offset, offset + toWrite)
+                    PlatformCopyAdapter.copy(data, offset, segData, pos, toWrite)
                     toWrite
                 }
                 offset += written

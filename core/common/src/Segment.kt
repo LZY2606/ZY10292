@@ -204,7 +204,7 @@ public class Segment {
             prefix = sharedCopy()
         } else {
             prefix = SegmentPool.take()
-            data.copyInto(prefix.data, startIndex = pos, endIndex = pos + byteCount)
+            PlatformCopyAdapter.copy(data, pos, prefix.data, 0, byteCount)
         }
 
         prefix.limit = prefix.pos + byteCount
@@ -224,9 +224,12 @@ public class Segment {
      */
     internal fun compact(): Segment {
         check(this.prev != null) { "cannot compact" }
-        if (!this.prev!!.owner) return this // Cannot compact: prev isn't writable.
+        if (!this.prev!!.canAppend) return this // Cannot compact: prev isn't writable.
         val byteCount = limit - pos
-        val availableByteCount = SIZE - this.prev!!.limit + if (this.prev!!.shared) 0 else this.prev!!.pos
+        // Only an exclusive predecessor may be compacted in place; a shared predecessor
+        // can only accept bytes appended at its limit.
+        val availableByteCount = SIZE - this.prev!!.limit +
+                if (this.prev!!.ownership == SegmentOwnership.EXCLUSIVE) this.prev!!.pos else 0
         if (byteCount > availableByteCount) return this // Cannot compact: not enough writable space.
         val predecessor = this.prev
         writeTo(predecessor!!, byteCount)
@@ -316,32 +319,29 @@ public class Segment {
 
     /** Moves `byteCount` bytes from this segment to `sink`.  */
     internal fun writeTo(sink: Segment, byteCount: Int) {
-        check(sink.owner) { "only owner can write" }
+        check(sink.canAppend) { "only owner can write" }
         if (sink.limit + byteCount > SIZE) {
             // We can't fit byteCount bytes at the sink's current position. Shift sink first.
-            if (sink.shared) throw IllegalArgumentException()
+            if (sink.ownership != SegmentOwnership.EXCLUSIVE) throw IllegalArgumentException()
             if (sink.limit + byteCount - sink.pos > SIZE) throw IllegalArgumentException()
-            sink.data.copyInto(sink.data, startIndex = sink.pos, endIndex = sink.limit)
+            PlatformCopyAdapter.copy(sink.data, sink.pos, sink.data, 0, sink.limit - sink.pos)
             sink.limit -= sink.pos
             sink.pos = 0
         }
 
-        data.copyInto(
-            sink.data, destinationOffset = sink.limit, startIndex = pos,
-            endIndex = pos + byteCount
-        )
+        PlatformCopyAdapter.copy(data, pos, sink.data, sink.limit, byteCount)
         sink.limit += byteCount
         pos += byteCount
     }
 
     internal fun readTo(dst: ByteArray, dstStartOffset: Int, dstEndOffset: Int) {
         val len = dstEndOffset - dstStartOffset
-        data.copyInto(dst, dstStartOffset, pos, pos + len)
+        PlatformCopyAdapter.copy(data, pos, dst, dstStartOffset, len)
         pos += len
     }
 
     internal fun write(src: ByteArray, srcStartOffset: Int, srcEndOffset: Int) {
-        src.copyInto(data, limit, srcStartOffset, srcEndOffset)
+        PlatformCopyAdapter.copy(src, srcStartOffset, data, limit, srcEndOffset - srcStartOffset)
         limit += srcEndOffset - srcStartOffset
     }
 
@@ -471,14 +471,7 @@ internal fun Segment.indexOfBytesInbound(bytes: ByteArray, startOffset: Int): In
         if (idx < 0) {
             return -1
         }
-        var found = true
-        for (innerIdx in 1 until bytes.size) {
-            if (data[pos + idx + innerIdx] != bytes[innerIdx]) {
-                found = false
-                break
-            }
-        }
-        if (found) {
+        if (PlatformCopyAdapter.compare(data, pos + idx, bytes, 0, bytes.size)) {
             return idx
         } else {
             offset++

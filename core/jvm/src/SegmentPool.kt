@@ -227,7 +227,9 @@ internal actual object SegmentPool {
     @JvmStatic
     actual fun recycle(segment: Segment) {
         require(segment.next == null && segment.prev == null)
-        if (segment.copyTracker?.removeCopy() == true) return // This segment cannot be recycled.
+        // The pool eligibility decision belongs to the common segment-ownership core:
+        // a segment whose reference generation is still shared must never return to the pool.
+        if (!segment.releaseForPooling()) return // This segment cannot be recycled.
 
         val buckets = hashBuckets
         val bucketId = l1BucketId()

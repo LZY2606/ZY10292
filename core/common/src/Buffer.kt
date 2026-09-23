@@ -224,7 +224,9 @@ public class Buffer : Source, Sink {
         while (remainingByteCount > 0L) {
             val copy = s!!.sharedCopy()
             copy.pos += currentOffset.toInt()
-            copy.limit = minOf(copy.pos + remainingByteCount.toInt(), copy.limit)
+            // The clamp is computed using Long arithmetic: remainingByteCount may exceed
+            // Int.MAX_VALUE for buffers larger than 2 GiB and a plain toInt() would overflow.
+            copy.limit = minOf(copy.pos.toLong() + remainingByteCount, copy.limit.toLong()).toInt()
             out.pushSegment(copy)
             remainingByteCount -= (copy.limit - copy.pos).toLong()
             currentOffset = 0L
@@ -243,7 +245,7 @@ public class Buffer : Source, Sink {
 
         // Omit the tail if it's still writable.
         val tail = tail!!
-        if (tail.limit < Segment.SIZE && tail.owner) {
+        if (tail.limit < Segment.SIZE && tail.canAppend) {
             result -= (tail.limit - tail.pos).toLong()
         }
 
@@ -364,7 +366,7 @@ public class Buffer : Source, Sink {
         }
 
         val t = tail!!
-        if (t.limit + minimumCapacity > Segment.SIZE || !t.owner) {
+        if (t.limit + minimumCapacity > Segment.SIZE || !t.canAppend) {
             val newTail = t.push(SegmentPool.take()) // Append a new empty segment to fill up.
             tail = newTail
             return newTail
@@ -459,8 +461,9 @@ public class Buffer : Source, Sink {
             // Is a prefix of the source's head segment all that we need to move?
             if (remainingByteCount < source.head!!.size) {
                 val tail = tail
-                if (tail != null && tail.owner &&
-                    remainingByteCount + tail.limit - (if (tail.shared) 0 else tail.pos) <= Segment.SIZE
+                if (tail != null && tail.canAppend &&
+                    remainingByteCount + tail.limit -
+                    (if (tail.ownership == SegmentOwnership.EXCLUSIVE) tail.pos else 0) <= Segment.SIZE
                 ) {
                     // Our existing segments are sufficient. Move bytes from source's head to our tail.
                     source.head!!.writeTo(tail, remainingByteCount.toInt())
