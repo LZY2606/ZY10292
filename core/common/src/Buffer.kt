@@ -599,7 +599,8 @@ public class Buffer : Source, Sink {
             nextHead.prev = null
         }
         oldHead.next = null
-        SegmentPool.recycle(oldHead)
+        oldHead.releaseToPool()
+        SegmentRingChecker.checkRing(this)
     }
 
     /**
@@ -622,7 +623,8 @@ public class Buffer : Source, Sink {
             newTail.next = null
         }
         oldTail.prev = null
-        SegmentPool.recycle(oldTail)
+        oldTail.releaseToPool()
+        SegmentRingChecker.checkRing(this)
     }
 
     @Suppress("NOTHING_TO_INLINE")

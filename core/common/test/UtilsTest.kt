@@ -7,6 +7,7 @@ package kotlinx.io
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class UtilsTest {
     @Test
@@ -38,5 +39,52 @@ class UtilsTest {
         num2length.forEach { (num, length) ->
             assertEquals(length, hexNumberLength(num), "Wrong length for 0x${num.toString(16)}")
         }
+    }
+
+    @Test
+    fun checkByteCountBoundaries() {
+        checkByteCount(0L)
+        checkByteCount(Long.MAX_VALUE)
+        assertFailsWith<IllegalArgumentException> { checkByteCount(-1L) }
+        assertFailsWith<IllegalArgumentException> { checkByteCount(Long.MIN_VALUE) }
+    }
+
+    @Test
+    fun checkBoundsEmptyRanges() {
+        // Empty (ZST-like) ranges are always valid within bounds.
+        checkBounds(0L, 0L, 0L)
+        checkBounds(10L, 0L, 0L)
+        checkBounds(10L, 10L, 10L)
+        assertFailsWith<IndexOutOfBoundsException> { checkBounds(0L, 0L, 1L) }
+        assertFailsWith<IndexOutOfBoundsException> { checkBounds(0L, -1L, 0L) }
+        assertFailsWith<IllegalArgumentException> { checkBounds(10L, 5L, 4L) }
+    }
+
+    @Test
+    fun checkBoundsAround2GB() {
+        // Sizes around the 2GB mark must be handled using Long arithmetic.
+        val size = Int.MAX_VALUE.toLong() + 1L // 2GB
+        checkBounds(size, 0L, size)
+        checkBounds(size, size, size)
+        checkBounds(size, Int.MAX_VALUE.toLong(), size)
+        assertFailsWith<IndexOutOfBoundsException> { checkBounds(size, 0L, size + 1L) }
+        assertFailsWith<IndexOutOfBoundsException> { checkBounds(size, -1L, size) }
+    }
+
+    @Test
+    fun checkOffsetAndCountBoundaries() {
+        checkOffsetAndCount(0L, 0L, 0L)
+        checkOffsetAndCount(10L, 10L, 0L)
+        // 2GB+ sizes and offsets must not overflow into acceptance or rejection of valid ranges.
+        val size = Int.MAX_VALUE.toLong() * 3L
+        checkOffsetAndCount(size, 0L, size)
+        checkOffsetAndCount(size, size, 0L)
+        assertFailsWith<IllegalArgumentException> { checkOffsetAndCount(size, 0L, size + 1L) }
+        assertFailsWith<IllegalArgumentException> { checkOffsetAndCount(size, size, 1L) }
+        assertFailsWith<IllegalArgumentException> { checkOffsetAndCount(size, -1L, 0L) }
+        assertFailsWith<IllegalArgumentException> { checkOffsetAndCount(size, 0L, -1L) }
+        // offset + byteCount may overflow a Long; the check must still reject it.
+        assertFailsWith<IllegalArgumentException> { checkOffsetAndCount(Long.MAX_VALUE, Long.MAX_VALUE, 1L) }
+        assertFailsWith<IllegalArgumentException> { checkOffsetAndCount(Long.MAX_VALUE, Long.MAX_VALUE - 1L, 2L) }
     }
 }

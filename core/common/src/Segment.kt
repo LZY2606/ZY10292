@@ -204,7 +204,7 @@ public class Segment {
             prefix = sharedCopy()
         } else {
             prefix = SegmentPool.take()
-            data.copyInto(prefix.data, startIndex = pos, endIndex = pos + byteCount)
+            PlatformCopyAdapter.copy(data, pos, prefix.data, 0, byteCount)
         }
 
         prefix.limit = prefix.pos + byteCount
@@ -232,7 +232,7 @@ public class Segment {
         writeTo(predecessor!!, byteCount)
         val successor = pop()
         check(successor == null)
-        SegmentPool.recycle(this)
+        releaseToPool()
         return predecessor
     }
 
@@ -321,27 +321,24 @@ public class Segment {
             // We can't fit byteCount bytes at the sink's current position. Shift sink first.
             if (sink.shared) throw IllegalArgumentException()
             if (sink.limit + byteCount - sink.pos > SIZE) throw IllegalArgumentException()
-            sink.data.copyInto(sink.data, startIndex = sink.pos, endIndex = sink.limit)
+            PlatformCopyAdapter.copy(sink.data, sink.pos, sink.data, 0, sink.limit - sink.pos)
             sink.limit -= sink.pos
             sink.pos = 0
         }
 
-        data.copyInto(
-            sink.data, destinationOffset = sink.limit, startIndex = pos,
-            endIndex = pos + byteCount
-        )
+        PlatformCopyAdapter.copy(data, pos, sink.data, sink.limit, byteCount)
         sink.limit += byteCount
         pos += byteCount
     }
 
     internal fun readTo(dst: ByteArray, dstStartOffset: Int, dstEndOffset: Int) {
         val len = dstEndOffset - dstStartOffset
-        data.copyInto(dst, dstStartOffset, pos, pos + len)
+        PlatformCopyAdapter.copy(data, pos, dst, dstStartOffset, len)
         pos += len
     }
 
     internal fun write(src: ByteArray, srcStartOffset: Int, srcEndOffset: Int) {
-        src.copyInto(data, limit, srcStartOffset, srcEndOffset)
+        PlatformCopyAdapter.copy(src, srcStartOffset, data, limit, srcEndOffset - srcStartOffset)
         limit += srcEndOffset - srcStartOffset
     }
 
@@ -471,14 +468,7 @@ internal fun Segment.indexOfBytesInbound(bytes: ByteArray, startOffset: Int): In
         if (idx < 0) {
             return -1
         }
-        var found = true
-        for (innerIdx in 1 until bytes.size) {
-            if (data[pos + idx + innerIdx] != bytes[innerIdx]) {
-                found = false
-                break
-            }
-        }
-        if (found) {
+        if (PlatformCopyAdapter.rangeEquals(data, pos + idx, bytes, 0, bytes.size)) {
             return idx
         } else {
             offset++
